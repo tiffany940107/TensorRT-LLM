@@ -75,9 +75,10 @@ struct BlockSparseParams
     int num_local_blocks; // Sliding window blocks
     int vertical_stride;
 
-    __device__ bool computeMask(int row_idx, int col_idx, int seq_length, int num_heads, int head_idx) const
+    __device__ bool computeMask(
+        int row_idx, int col_idx, int q_seq_length, int kv_seq_length, int num_heads, int head_idx) const
     {
-        bool causal_mask = row_idx < seq_length && col_idx < seq_length && col_idx <= row_idx;
+        bool causal_mask = row_idx < q_seq_length && col_idx < kv_seq_length && col_idx <= row_idx;
 
         // Mask 1/0 decision is made at block_size granularity
         int block_row_idx = row_idx / block_size;
@@ -90,6 +91,11 @@ struct BlockSparseParams
 
         bool is_valid = causal_mask && (block_local_mask || block_vertical_stride_mask);
         return is_valid;
+    }
+
+    __device__ bool computeMask(int row_idx, int col_idx, int seq_length, int num_heads, int head_idx) const
+    {
+        return computeMask(row_idx, col_idx, seq_length, seq_length, num_heads, head_idx);
     }
 };
 
@@ -213,6 +219,31 @@ struct BuildDecoderInfoParams
 
 template <typename T>
 void invokeBuildDecoderInfo(BuildDecoderInfoParams<T> const& params, cudaStream_t stream);
+
+template <
+    int HeadSize,
+    int BlockSizeQ,
+    int BlockSizeK,
+    int BlockSizeV,
+    typename T,
+    typename TQuant,
+    typename TSmoothK
+>
+void sage_quant(
+    // host var
+    unsigned int batch_size, unsigned int head_num, unsigned int max_seq_len,
+    bool smooth_k, bool is_padded,
+    // device input
+    const void* q, const void* k, const void* v,
+    const int stride_q, const int stride_k, const int stride_v,
+    const int* cu_seqlens_q, const int* cu_seqlens_kv,
+    // sizeof(workspace) = batch_size * head_num * head_size * sizeof(TSmoothK)
+    void* workspace,
+    // device output
+    void* quant_q, void* quant_k, void* quant_v,
+    float* scales_q, float* scales_k, float* scales_v,
+    cudaStream_t stream);
+
 
 } // namespace kernels
 } // namespace tensorrt_llm

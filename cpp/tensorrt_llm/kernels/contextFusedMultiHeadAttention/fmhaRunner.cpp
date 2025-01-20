@@ -154,6 +154,7 @@ void FusedMHARunnerV2::setupKernelParams(MHARunnerParams runnerParams)
     // (bmm1_output * scale_bmm1 + alibi) * scale_after_alibi
     float const scale_after_alibi = mFixedParams.scaleAlibi ? inv_sqrt_scale : 1.0f;
     float scale_bmm1 = mFixedParams.scaleAlibi ? 1.0f : inv_sqrt_scale;
+    // std::cout<<"scale bmm1: " <<scale_bmm1 <<std::endl;
     // Fuse 1.0f / qk_tanh_scale into scale_bmm1.
     scale_bmm1 = mFixedParams.qkTanhScale != 0.f ? scale_bmm1 / mFixedParams.qkTanhScale : scale_bmm1;
     // The softmax output scale (not used).
@@ -221,6 +222,14 @@ void FusedMHARunnerV2::setupKernelParams(MHARunnerParams runnerParams)
     {
         mKernelParams.paged_kv_cache = runnerParams.pagedKvCache.copyKVBlockArrayForContextFMHA();
     }
+
+    mKernelParams.sage.q.scales = runnerParams.qScalePtr;
+    mKernelParams.sage.k.scales = runnerParams.kScalePtr;
+    mKernelParams.sage.v.scales = runnerParams.vScalePtr;
+
+    mKernelParams.sage.q.max_nblock = runnerParams.qMaxNBlock;
+    mKernelParams.sage.k.max_nblock = runnerParams.kMaxNBlock;
+    mKernelParams.sage.v.max_nblock = runnerParams.vMaxNBlock;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -363,6 +372,7 @@ void FusedMHARunnerV2::setupLaunchParams(MHARunnerParams runnerParams)
 // TMA descriptors are used as grid_constant parameters (remove MemCpyH2D operations)
 void FusedMHARunnerV2::setPackedQkvTmaDescriptors(MHARunnerParams runnerParams)
 {
+    // std::cout<<"set packed QKV Tma"<<std::endl;
     // split D into multiple groups in order to match the TMA swizzle mode (128B)
     uint32_t const d_in_bytes = get_size_in_bytes(mLaunchParams.padded_d, mFixedParams.dataType);
     uint32_t const d_groups = d_in_bytes > 128 ? d_in_bytes / 128 : 1;
@@ -405,6 +415,7 @@ void FusedMHARunnerV2::setPackedQkvTmaDescriptors(MHARunnerParams runnerParams)
     tensor_stride_qkv[1] = tensor_size_qkv[1] * tensor_stride_qkv[0];                    // d*h
     tensor_stride_qkv[2] = tensor_size_qkv[2] * tensor_stride_qkv[1];                    // d*h*3
 
+    // TODO: this is outputDatatype?
     uint64_t tensor_stride_o[3];
     tensor_stride_o[0] = get_size_in_bytes(tensor_size_o[0], mFixedParams.dataType); // d
     tensor_stride_o[1] = tensor_size_o[1] * tensor_stride_o[0];                      // d*h
@@ -624,6 +635,7 @@ void FusedMHARunnerV2::run(MHARunnerParams runnerParams)
     // Need to set tma descriptors additionally.
     if (mSM == kSM_90 && mLaunchParams.use_tma)
     {
+        // std::cout<<"use TMA"<<std::endl;
         switch (mFixedParams.attentionInputLayout)
         {
         case AttentionInputLayout::PACKED_QKV: setPackedQkvTmaDescriptors(runnerParams); break;
